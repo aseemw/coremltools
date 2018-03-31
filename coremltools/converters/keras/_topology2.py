@@ -498,6 +498,26 @@ class NetGraph(object):
                     idx += 1
                     nb_layers += 1
             idx += 1
+
+    def remove_redundant_reshape_flatten_layers(self):
+        """ Find "reshape + flatten" layers patterns that serve no purpose and remove them  
+        """
+        layers_to_be_removed = []
+        for layer in self.layer_list:
+            keras_layer = self.keras_layer_map[layer]
+            if isinstance(keras_layer, _keras.layers.core.Reshape) and \
+                len(self.edge_map[layer]) == 1:
+                next_layer = self.edge_map[layer][0]
+                next_keras_layer = self.keras_layer_map[next_layer]
+                if isinstance(next_keras_layer, _keras.layers.core.Flatten) and \
+                    len(self.edge_map[next_layer]) == 1:
+                    input_shape = keras_layer.input_shape
+                    output_shape = next_keras_layer.output_shape
+                    if input_shape == output_shape:
+                        layers_to_be_removed.append(layer)
+                        layers_to_be_removed.append(next_layer)
+        for layer in self.layer_list:
+            self._remove_layer_and_reconnect(layer)
     
     def is_activation(self,layer):
         keras_layer = self.keras_layer_map[layer]
@@ -725,6 +745,7 @@ class NetGraph(object):
             self.insert_permute_for_spatial_bn()
             self.defuse_activation()
             self.remove_internal_input_layers()
+            self.remove_redundant_reshape_flatten_layers()
 
     def print_layer_list(self):
         print('\n')
