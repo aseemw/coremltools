@@ -1506,10 +1506,29 @@ class SSAConverter(object):
         # NNSSA: [u'encoder/Variable/read', u'Placeholder', u'encoder/embedding_lookup/axis']
         # CoreML         Given two inputs, 'data' and 'indices', gather the slices of 'data'
         axis = node.attr['axis']
-        layer = self._get_builder().add_gather(
-            name=node.name, input_names=input_names[0:2], output_name=node.name, axis=axis)
+        indices_shape = input_nodes[1].datatype.get_shape()
+        if axis == 0 and input_nodes[0].value is not None \
+            and len(input_nodes[0].value.val.shape) == 2 and len(indices_shape) == 2: \
 
-        shapes.propagate_single_layer(layer, self.tensor_shapes)
+
+                expand_layer = self._get_builder().add_expand_dims(
+                         name=node.name+'_expand_dims', input_name=input_names[1],
+                         output_name=node.name+'_expand_dims', axes=[-1])
+                shapes.propagate_single_layer(expand_layer, self.tensor_shapes)
+
+                embed_layer = self._get_builder().add_embedding_nd(name=node.name,
+                                                                   input_name=node.name+'_expand_dims',
+                                                                   output_name=node.name,
+                                                                   vocab_size=input_nodes[0].value.val.shape[0],
+                                                                   embedding_size=input_nodes[0].value.val.shape[1],
+                                                                   W=np.transpose(input_nodes[0].value.val))
+
+                shapes.propagate_single_layer(embed_layer, self.tensor_shapes)
+        else:
+            layer = self._get_builder().add_gather(
+                name=node.name, input_names=input_names[0:2], output_name=node.name, axis=axis)
+
+            shapes.propagate_single_layer(layer, self.tensor_shapes)
 
     def _convert_gather_nd(self, node):
         input_nodes, input_names, input_types = self._get_input_tensors(node)
