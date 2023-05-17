@@ -14,6 +14,7 @@ from distutils.version import StrictVersion as _StrictVersion
 
 from packaging import version
 
+from . import kmeans1d as _kmeans1d
 from coremltools import _logger as logger
 
 
