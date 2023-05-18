@@ -25,7 +25,7 @@
 from collections import namedtuple
 import ctypes
 import os
-from typing import Sequence
+from typing import Optional, Sequence
 
 from . import _core  # type: ignore
 
@@ -39,10 +39,15 @@ with open(version_txt, 'r') as f:
     __version__ = f.read().strip()
 
 
-def cluster(array: Sequence[float], k: int) -> Clustered:
+def cluster(
+        array: Sequence[float],
+        k: int,
+        *,
+        weights: Optional[Sequence[float]] = None) -> Clustered:
     """
     :param array: A sequence of floats
     :param k: Number of clusters (int)
+    :param weights: Sequence of weights (if provided, must have same length as `array`)
     :return: A tuple with (clusters, centroids)
     """
     assert k > 0, f'Invalid k: {k}'
@@ -50,13 +55,22 @@ def cluster(array: Sequence[float], k: int) -> Clustered:
     assert n > 0, f'Invalid len(array): {n}'
     k = min(k, n)
 
+    if weights is not None:
+        assert len(weights) == n, f'len(weights)={len(weights)} != len(array)={n}'
+
     c_array = (ctypes.c_double * n)(*array)
     c_n = ctypes.c_ulong(n)
     c_k = ctypes.c_ulong(k)
     c_clusters = (ctypes.c_ulong * n)()
     c_centroids = (ctypes.c_double * k)()
 
-    _DLL.cluster(c_array, c_n, c_k, c_clusters, c_centroids)
+    if weights is None:
+        _DLL.cluster(c_array, c_n, c_k, c_clusters, c_centroids)
+    else:
+        c_weights = (ctypes.c_double * n)(*weights)
+        _DLL.cluster_with_weights(c_array, c_weights, c_n, c_k, c_clusters, c_centroids)
+
+
     clusters = list(c_clusters)
     centroids = list(c_centroids)
 
