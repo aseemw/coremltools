@@ -13,19 +13,22 @@ from sys import stdout as _stdout
 import numpy as _np
 
 from coremltools import ComputeUnit as _ComputeUnit
-from coremltools.models import (_QUANTIZATION_MODE_CUSTOM_LOOKUP_TABLE,
-                                _QUANTIZATION_MODE_DEQUANTIZE,
-                                _QUANTIZATION_MODE_LINEAR_QUANTIZATION,
-                                _QUANTIZATION_MODE_LINEAR_SYMMETRIC,
-                                _QUANTIZATION_MODE_LOOKUP_TABLE_KMEANS,
-                                _QUANTIZATION_MODE_LOOKUP_TABLE_LINEAR,
-                                _SUPPORTED_QUANTIZATION_MODES)
-from coremltools.models import MLModel as _MLModel
-
-from ... import (_MINIMUM_FP16_SPEC_VERSION,
-                 _MINIMUM_QUANTIZED_MODEL_SPEC_VERSION,
-                 _SPECIFICATION_VERSION_IOS_14)
-from ..._deps import _HAS_SKLEARN as _HAS_SKLEARN
+from coremltools._deps import kmeans1d as _kmeans1d
+from coremltools.models import (
+    _QUANTIZATION_MODE_CUSTOM_LOOKUP_TABLE,
+    _QUANTIZATION_MODE_DEQUANTIZE,
+    _QUANTIZATION_MODE_LINEAR_QUANTIZATION,
+    _QUANTIZATION_MODE_LINEAR_SYMMETRIC,
+    _QUANTIZATION_MODE_LOOKUP_TABLE_KMEANS,
+    _QUANTIZATION_MODE_LOOKUP_TABLE_LINEAR,
+    _SUPPORTED_QUANTIZATION_MODES,
+    MLModel as _MLModel
+)
+from ... import (
+    _MINIMUM_FP16_SPEC_VERSION,
+    _MINIMUM_QUANTIZED_MODEL_SPEC_VERSION,
+    _SPECIFICATION_VERSION_IOS_14
+)
 from ..utils import _get_model, _macos_version, _wp_to_fp16wp
 from .optimization_utils import _optimize_nn
 
@@ -355,6 +358,7 @@ def _get_linear_lookup_table_and_weight(nbits, wp):
     return lookup_table, qw
 
 
+# XXX: Some of these parameter don't make sense
 def _get_kmeans_lookup_table_and_weight(
     nbits, w, init="k-means++", tol=1e-2, n_init=1, rand_seed=0
 ):
@@ -374,24 +378,20 @@ def _get_kmeans_lookup_table_and_weight(
     wq: numpy.array
         Quantized weight of type numpy.uint8
     """
-    if _HAS_SKLEARN:
-        from sklearn.cluster import KMeans
-    else:
-        raise ModuleNotFoundError(
-            "scikit-learn is required for k-means quantization."
-            " To install, run: \"pip install -U scikit-learn\"."
-        )
-    units = _np.prod(w.shape)
+    num_weights = _np.prod(w.shape)
     lut_len = 1 << nbits
-    n_clusters = units if (units < lut_len) else lut_len
+    n_clusters = min(num_weights, lut_len)
     wf = w.reshape(-1, 1)
-    kmeans = KMeans(
-        n_clusters=n_clusters, init=init, tol=tol, n_init=n_init, random_state=rand_seed
-    ).fit(wf)
-    wq = kmeans.labels_[:units]
-    lut = _np.zeros(lut_len)
-    lut[:n_clusters] = kmeans.cluster_centers_.flatten()
-    return lut, wq
+
+    kmeans_results = _kmeans1d.cluster(wf, n_clusters)
+    lut = kmeans_results.centroids
+    wq = kmeans_results.clusters
+
+    if len(lut) < lut_len:
+        # Pad with zeros
+        lut += [0] * (lut_len - len(lut))
+
+    return _np.array(lut), _np.array(wq)
 
 
 def _quantize_channelwise_linear(weight, nbits, axis=0, symmetric=False):
