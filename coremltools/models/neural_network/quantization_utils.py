@@ -14,6 +14,7 @@ import numpy as _np
 
 from coremltools import ComputeUnit as _ComputeUnit
 from coremltools._deps import kmeans1d as _kmeans1d
+from ..._deps import _HAS_SKLEARN as _HAS_SKLEARN
 from coremltools.models import (
     _QUANTIZATION_MODE_CUSTOM_LOOKUP_TABLE,
     _QUANTIZATION_MODE_DEQUANTIZE,
@@ -360,7 +361,7 @@ def _get_linear_lookup_table_and_weight(nbits, wp):
 
 # XXX: Some of these parameter don't make sense
 def _get_kmeans_lookup_table_and_weight(
-    nbits, w, init="k-means++", tol=1e-2, n_init=1, rand_seed=0
+    nbits, w, init="k-means++", tol=1e-2, n_init=1, rand_seed=0, use_kmeans1d=False,
 ):
     """
     Generate K-Means lookup table given a weight parameter field
@@ -378,20 +379,41 @@ def _get_kmeans_lookup_table_and_weight(
     wq: numpy.array
         Quantized weight of type numpy.uint8
     """
-    num_weights = _np.prod(w.shape)
-    lut_len = 1 << nbits
-    n_clusters = min(num_weights, lut_len)
-    wf = w.reshape(-1, 1)
 
-    kmeans_results = _kmeans1d.cluster(wf, n_clusters)
-    lut = kmeans_results.centroids
-    wq = kmeans_results.clusters
+    if use_kmeans1d:
+        num_weights = _np.prod(w.shape)
+        lut_len = 1 << nbits
+        n_clusters = min(num_weights, lut_len)
+        wf = w.reshape(-1, 1)
 
-    if len(lut) < lut_len:
-        # Pad with zeros
-        lut += [0] * (lut_len - len(lut))
+        kmeans_results = _kmeans1d.cluster(wf, n_clusters)
+        lut = kmeans_results.centroids
+        wq = kmeans_results.clusters
 
-    return _np.array(lut), _np.array(wq)
+        if len(lut) < lut_len:
+            # Pad with zeros
+            lut += [0] * (lut_len - len(lut))
+
+        return _np.array(lut), _np.array(wq)
+    else:
+        if _HAS_SKLEARN:
+            from sklearn.cluster import KMeans
+        else:
+            raise ModuleNotFoundError(
+                "scikit-learn is required for k-means quantization."
+                " To install, run: \"pip install -U scikit-learn\"."
+            )
+        units = _np.prod(w.shape)
+        lut_len = 1 << nbits
+        n_clusters = units if (units < lut_len) else lut_len
+        wf = w.reshape(-1, 1)
+        kmeans = KMeans(
+            n_clusters=n_clusters, init=init, tol=tol, n_init=n_init, random_state=rand_seed
+        ).fit(wf)
+        wq = kmeans.labels_[:units]
+        lut = _np.zeros(lut_len)
+        lut[:n_clusters] = kmeans.cluster_centers_.flatten()
+        return lut, wq
 
 
 def _quantize_channelwise_linear(weight, nbits, axis=0, symmetric=False):
