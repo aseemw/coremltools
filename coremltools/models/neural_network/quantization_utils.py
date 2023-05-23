@@ -362,6 +362,7 @@ def _get_linear_lookup_table_and_weight(nbits, wp):
 # XXX: Some of these parameter don't make sense
 def _get_kmeans_lookup_table_and_weight(
     nbits, w, init="k-means++", tol=1e-2, n_init=1, rand_seed=0, use_kmeans1d=False,
+    use_weighted_kmeans1d=False,
 ):
     """
     Generate K-Means lookup table given a weight parameter field
@@ -384,11 +385,18 @@ def _get_kmeans_lookup_table_and_weight(
         num_weights = _np.prod(w.shape)
         lut_len = 1 << nbits
         n_clusters = min(num_weights, lut_len)
-        wf = w.reshape(-1, 1)
+        wf = w.reshape(-1)
 
-        kmeans_results = _kmeans1d.cluster(wf, n_clusters)
-        lut = kmeans_results.centroids
-        wq = kmeans_results.clusters
+        if use_weighted_kmeans1d:
+            values, indices, counts = _np.unique(wf, return_inverse=True, return_counts=True)
+            #print(len(values), len(indices), len(counts))
+            kmeans_results = _kmeans1d.cluster(values, n_clusters, weights=counts)
+            lut = kmeans_results.centroids
+            wq = _np.array(kmeans_results.clusters)[indices]
+        else:
+            kmeans_results = _kmeans1d.cluster(wf, n_clusters)
+            lut = kmeans_results.centroids
+            wq = kmeans_results.clusters
 
         if len(lut) < lut_len:
             # Pad with zeros
@@ -396,13 +404,14 @@ def _get_kmeans_lookup_table_and_weight(
 
         return _np.array(lut), _np.array(wq)
     else:
-        if _HAS_SKLEARN:
-            from sklearn.cluster import KMeans
-        else:
-            raise ModuleNotFoundError(
-                "scikit-learn is required for k-means quantization."
-                " To install, run: \"pip install -U scikit-learn\"."
-            )
+        # if _HAS_SKLEARN:
+        #     from sklearn.cluster import KMeans
+        # else:
+        #     raise ModuleNotFoundError(
+        #         "scikit-learn is required for k-means quantization."
+        #         " To install, run: \"pip install -U scikit-learn\"."
+        #     )
+        from sklearn.cluster import KMeans
         units = _np.prod(w.shape)
         lut_len = 1 << nbits
         n_clusters = units if (units < lut_len) else lut_len
